@@ -24,6 +24,28 @@ def make_request(url: str, timeout: float = 10.0) -> requests.Response:
     return requests.get(url, headers=HEADERS, timeout=timeout)
 
 
+def get_driver(headless: bool = True) -> webdriver.Chrome:
+    """Return a stealth-patched Chrome driver."""
+    options = Options()
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    driver = webdriver.Chrome(options=options)
+    stealth(
+        driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+    )
+    return driver
+
+
 def get_soup(
     url: str,
     delay: float = 2.0,
@@ -36,23 +58,7 @@ def get_soup(
     """Selenium + stealth + retries to render JS and return parsed HTML."""
 
     def fetch():
-        options = Options()
-        if headless:
-            options.add_argument("--headless=new")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-
-        driver = webdriver.Chrome(options=options)
-        stealth(
-            driver,
-            languages=["en-US", "en"],
-            vendor="Google Inc.",
-            platform="Win32",
-            webgl_vendor="Intel Inc.",
-            renderer="Intel Iris OpenGL Engine",
-            fix_hairline=True,
-        )
+        driver = get_driver(headless=headless)
         driver.get(url)
         time.sleep(delay)
         html = driver.page_source
@@ -69,6 +75,7 @@ def throttle_and_retry(
     max_delay: float = 1.5,
     verbose: bool = True,
 ):
+    """Wrap a request function with delay and retry logic."""
     attempt = 0
     while attempt < max_retries:
         delay = random.uniform(min_delay, max_delay)
