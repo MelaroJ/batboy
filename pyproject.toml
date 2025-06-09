@@ -17,9 +17,6 @@ dependencies = [
     "selenium-stealth>=1.0.6",
     "selenium>=4.33.0",
     "typer>=0.16.0",
-    "ruff>=0.11.13",
-    "black>=25.1.0",
-    "mypy>=1.16.0",
     "requests>=2.32.3",
     "logging>=0.4.9.6",
 ]
@@ -30,3 +27,12 @@ batboy = "batboy:main"
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "mypy>=1.16.0",
+    "pytest-cov>=6.1.1",
+    "pytest>=8.4.0",
+    "ruff>=0.11.13",
+]

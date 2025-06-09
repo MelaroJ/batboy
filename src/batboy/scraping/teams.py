@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 import polars as pl
@@ -44,3 +45,71 @@ def get_ncaa_baseball_teams() -> pl.DataFrame:
     logger.info(f"Parsed {len(org_ids)} schools from dropdown.")
 
     return pl.DataFrame({"org_id": org_ids, "school_name": school_names})
+
+
+def get_team_seasons(org_id: int) -> pl.DataFrame:
+    """
+    Scrape all seasons for a given NCAA baseball team (org_id).
+    Returns one row per season with metadata.
+    """
+    soup: Optional[BeautifulSoup] = get_soup(
+        f"https://stats.ncaa.org/teams/history?org_id={org_id}&sport_code=MBA"
+    )
+    if not isinstance(soup, BeautifulSoup):
+        raise ValueError("Failed to load or parse HTML for team history.")
+
+    table = soup.find("table", {"id": "team_history_data_table"})
+    if not isinstance(table, Tag):
+        raise ValueError(f"No team history table found for org_id={org_id}")
+
+    _tbody = table.find("tbody")
+    if not isinstance(_tbody, Tag):
+        raise ValueError("Team history table missing <tbody>.")
+    tbody: Tag = _tbody  # type narrowing for Pyright
+
+    rows = tbody.find_all("tr")
+    records = []
+
+    for row in rows:
+        if not isinstance(row, Tag):
+            continue
+
+        cells = row.find_all("td")
+        if len(cells) < 9:
+            continue
+
+        year_cell = cells[0]
+        if not isinstance(year_cell, Tag):
+            continue
+
+        year_link = year_cell.find("a")
+
+        season_id = None
+        year_label = cells[0].get_text(strip=True)
+
+        if isinstance(year_link, Tag):
+            href = year_link.get("href")
+            if isinstance(href, str):
+                match = re.search(r"/teams/(\d+)", href)
+                if match:
+                    season_id = int(match.group(1))
+
+        try:
+            record = {
+                "org_id": org_id,
+                "season_id": season_id,
+                "year": year_label,
+                "coach": cells[1].get_text(strip=True),
+                "division": cells[2].get_text(strip=True),
+                "conference": cells[3].get_text(strip=True),
+                "wins": int(cells[4].get_text(strip=True)),
+                "losses": int(cells[5].get_text(strip=True)),
+                "ties": int(cells[6].get_text(strip=True)),
+                "win_pct": float(cells[7].get_text(strip=True)),
+                "notes": cells[8].get_text(strip=True),
+            }
+            records.append(record)
+        except Exception:
+            continue
+
+    return pl.DataFrame(records)
