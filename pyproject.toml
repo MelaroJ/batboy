@@ -1,0 +1,32 @@
+[project]
+name = "batboy"
+version = "0.1.0"
+description = "Scrape, wrangle, and visualize NCAA baseball data"
+readme = "README.md"
+authors = [
+    { name = "MelaroJ", email = "melarojake@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.13.4",
+    "lxml>=5.4.0",
+    "matplotlib>=3.10.3",
+    "polars>=1.30.0",
+    "rich>=14.0.0",
+    "seaborn>=0.13.2",
+    "selenium-stealth>=1.0.6",
+    "selenium>=4.33.0",
+    "typer>=0.16.0",
+    "ruff>=0.11.13",
+    "black>=25.1.0",
+    "mypy>=1.16.0",
+    "requests>=2.32.3",
+    "logging>=0.4.9.6",
+]
+
+[project.scripts]
+batboy = "batboy:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
