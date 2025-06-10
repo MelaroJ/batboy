@@ -107,5 +107,5 @@ def scrape_schedule(season_id: int) -> pl.DataFrame:
             }
         )
 
-    logger.info(f"Finished scraping {len(records)} games for season_id={season_id}.")
+    logger.info(f"Finished scraping {len(records)} games for season_id = {season_id}")
     return pl.DataFrame(records)

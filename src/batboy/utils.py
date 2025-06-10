@@ -1,12 +1,16 @@
 import logging
 
+from rich.logging import RichHandler
+
 
 def setup_logger(name: str = "batboy", level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger(name)
+
     if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("[%(levelname)s] %(message)s")
+        handler = RichHandler(markup=True, show_path=False, show_time=True)
+        formatter = logging.Formatter("%(message)s", datefmt="[%X]")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.setLevel(level)
+
     return logger
