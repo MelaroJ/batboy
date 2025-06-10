@@ -138,7 +138,15 @@ def scrape_team_stats(season_id: int, stat_type: str = "hitting") -> pl.DataFram
     df = pl.DataFrame(records)
 
     # Define field type rules
-    float_fields = {"ba", "obpct", "slgpct", "era", "fldpct", "sbapct"}
+    float_fields = {
+        "ba",
+        "era",
+        "fldpct",
+        "ip",
+        "obpct",
+        "sbapct",
+        "slgpct",
+    }
     int_fields = {
         "2b",
         "2b-a",
@@ -170,7 +178,6 @@ def scrape_team_stats(season_id: int, stat_type: str = "hitting") -> pl.DataFram
         "idp",
         "inh run score",
         "inh run",
-        "ip",
         "k",
         "kl",
         "l",
