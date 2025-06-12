@@ -7,7 +7,7 @@ from batboy.scraping.teams import get_ncaa_baseball_teams, get_team_seasons
 
 # These constants are known to exist — use a stable Division I team for reliability
 EXAMPLE_TEAM_NAME = "Tennessee"
-EXAMPLE_TEAM_ID = 698
+EXAMPLE_TEAM_ID = 694
 
 
 def test_get_ncaa_baseball_teams_returns_valid_dataframe():

@@ -40,6 +40,9 @@ def test_throttle_and_retry_retries_then_succeeds(caplog):
             raise ValueError("temporary fail")
         return "success"
 
-    result = throttle_and_retry(flaky_func, max_retries=5, verbose=False)
+    result = throttle_and_retry(flaky_func, max_retries=5, verbose=True)
     assert result == "success"
     assert state["attempts"] == 3
+
+    # Log assertion to silence Pyright + verify behavior
+    assert any("retrying" in rec.message for rec in caplog.records)
