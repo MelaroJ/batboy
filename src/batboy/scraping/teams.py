@@ -1,4 +1,5 @@
 import re
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -8,7 +9,7 @@ from selectolax.parser import HTMLParser
 
 from batboy.config.constants import BASE_DOMAIN
 from batboy.data import load_schools
-from batboy.scraping.core import get_dom
+from batboy.scraping.core import get_dom, get_driver
 from batboy.utils import setup_logger
 
 logger = setup_logger()
@@ -62,6 +63,8 @@ def get_ncaa_baseball_teams(refresh: bool = False) -> pl.DataFrame:
 def get_team_seasons(team: Union[int, str]) -> pl.DataFrame:
     """
     Scrape all seasons for a given NCAA baseball team.
+    Handles pagination and expands result beyond 25 default entries.
+
     Accepts either org_id (int) or school name (str).
     """
     df = load_schools()
@@ -86,61 +89,92 @@ def get_team_seasons(team: Union[int, str]) -> pl.DataFrame:
     url = f"{BASE_DOMAIN}/teams/history?org_id={org_id}&sport_code=MBA"
     logger.info(f"Fetching seasons for {team_label} ({org_id}) from {url}")
 
-    dom = get_dom(url)
-    if dom is None or dom.root is None:
-        raise ValueError("get_dom() failed to return a valid DOM.")
+    # Use a live Selenium driver to interact with dropdown and pagination
+    driver = get_driver(headless=True)
+    driver.get(url)
+    time.sleep(2.0)
 
-    table = dom.css_first("#team_history_data_table")
-    if table is None:
-        raise ValueError(f"No history table found for org_id={org_id}")
+    # Select 100 entries per page
+    try:
+        select = driver.find_element("name", "team_history_data_table_length")
+        for option in select.find_elements("tag name", "option"):
+            if option.get_attribute("value") == "100":
+                option.click()
+                time.sleep(2.0)  # Allow time for table to reload
+                break
+    except Exception as e:
+        driver.quit()
+        raise RuntimeError(f"Failed to select page length dropdown: {e}")
 
-    tbody = table.css_first("tbody")
-    if tbody is None:
-        raise ValueError("Team history table missing <tbody>.")
-    tbody = table.css_first("tbody")
-    if tbody is None:
-        raise ValueError("Team history table missing <tbody>.")
-
-    rows = tbody.css("tr")
     records = []
 
-    for row in rows:
-        cells = row.css("td")
-        if len(cells) < 9:
-            continue
+    while True:
+        html = driver.page_source
+        dom = HTMLParser(html)
+        table = dom.css_first("#team_history_data_table")
+        if not table:
+            driver.quit()
+            raise ValueError("No team history table found in DOM.")
 
-        season_id = None
-        season_url = None
-        year_cell = cells[0]
-        year_label = year_cell.text(strip=True)
+        tbody = table.css_first("tbody")
+        if not tbody:
+            driver.quit()
+            raise ValueError("Table missing <tbody>.")
 
-        year_link = year_cell.css_first("a")
-        if year_link:
-            href = year_link.attributes.get("href")
-            if isinstance(href, str):
-                season_url = href
-                match = re.search(r"/teams/(\d+)", href)
-                if match:
-                    season_id = int(match.group(1))
+        for row in tbody.css("tr"):
+            cells = row.css("td")
+            if len(cells) < 9:
+                continue
 
+            season_id = None
+            season_url = None
+            year_cell = cells[0]
+            year_label = year_cell.text(strip=True)
+
+            year_link = year_cell.css_first("a")
+            if year_link:
+                href = year_link.attributes.get("href")
+                if isinstance(href, str):
+                    season_url = href
+                    match = re.search(r"/teams/(\d+)", href)
+                    if match:
+                        season_id = int(match.group(1))
+
+            try:
+                record = {
+                    "org_id": org_id,
+                    "season_id": season_id,
+                    "season_url": season_url,
+                    "year": year_label,
+                    "coach": cells[1].text(strip=True),
+                    "division": cells[2].text(strip=True),
+                    "conference": cells[3].text(strip=True),
+                    "wins": int(cells[4].text(strip=True)),
+                    "losses": int(cells[5].text(strip=True)),
+                    "ties": int(cells[6].text(strip=True)),
+                    "win_pct": float(cells[7].text(strip=True)),
+                    "notes": cells[8].text(strip=True),
+                }
+                records.append(record)
+            except Exception:
+                continue
+
+        # Try to click next page
         try:
-            record = {
-                "org_id": org_id,
-                "season_id": season_id,
-                "season_url": season_url,
-                "year": year_label,
-                "coach": cells[1].text(strip=True),
-                "division": cells[2].text(strip=True),
-                "conference": cells[3].text(strip=True),
-                "wins": int(cells[4].text(strip=True)),
-                "losses": int(cells[5].text(strip=True)),
-                "ties": int(cells[6].text(strip=True)),
-                "win_pct": float(cells[7].text(strip=True)),
-                "notes": cells[8].text(strip=True),
-            }
-            records.append(record)
+            next_btn = driver.find_element(
+                "css selector", "#team_history_data_table_next"
+            )
+            class_attr = next_btn.get_attribute("class") or ""
+            if "disabled" in class_attr:
+                break  # Exit loop
+            else:
+                next_btn.click()
+                time.sleep(2.0)  # Wait for next page to load
         except Exception:
-            continue
+            logger.warning("Pagination failed or ended early.")
+            break
+
+    driver.quit()
 
     if records:
         first_year = records[-1]["year"]
@@ -148,11 +182,11 @@ def get_team_seasons(team: Union[int, str]) -> pl.DataFrame:
         logger.info(f"Most recent season: {last_year}")
         pprint(records[0])
         logger.info(
-            f"{team} history for {len(records)} seasons scraped ({first_year} to {
+            f"{team_label} history for {len(records)} seasons scraped ({first_year} to {
                 last_year
             })."
         )
     else:
-        logger.warning(f"No seasons found for {team}.")
+        logger.warning(f"No seasons found for {team_label}.")
 
     return pl.DataFrame(records)
