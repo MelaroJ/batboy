@@ -1,5 +1,7 @@
 # src/batboy/config/constants.py
 
+BASE_DOMAIN = "https://stats.ncaa.org"
+
 STAT_CATEGORY_SCHEMAS = {
     "hitting": [
         "Date",
@@ -82,7 +84,7 @@ STAT_CATEGORY_SCHEMAS = {
 }
 
 # Minimal set of common numeric columns (safe to cast as int or float)
-INT64_COLUMNS = {
+INT16_COLUMNS = {
     "R",
     "AB",
     "H",
@@ -138,4 +140,12 @@ INT64_COLUMNS = {
     "TP",
 }
 
-FLOAT32_COLUMNS = {"FldPct", "SBAPct", "ERA", "OBPct", "SlgPct", "BA", "IP", "win_pct"}
+FLOAT16_COLUMNS = {"FldPct", "SBAPct", "ERA", "OBPct", "SlgPct", "BA", "IP", "win_pct"}
+
+
+ALL_STAT_COLUMNS = set().union(*STAT_CATEGORY_SCHEMAS.values())
+
+DEFAULT_DTYPES = {
+    **{col: "Int16" for col in INT16_COLUMNS},
+    **{col: "Float16" for col in FLOAT16_COLUMNS},
+}
