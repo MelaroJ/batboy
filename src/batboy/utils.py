@@ -13,4 +13,5 @@ def setup_logger(name: str = "batboy", level: int = logging.INFO) -> logging.Log
         logger.addHandler(handler)
         logger.setLevel(level)
 
+    logger.propagate = False
     return logger
