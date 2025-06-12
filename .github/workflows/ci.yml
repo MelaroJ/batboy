@@ -30,5 +30,9 @@ jobs:
 
       - name: Run tests (excluding web)
         run: |
-          .\.venv\Scripts\activate 2>$null || source .venv/bin/activate
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            .\.venv\Scripts\activate
+          else
+            source .venv/bin/activate
+          fi
           pytest -m "not web"
