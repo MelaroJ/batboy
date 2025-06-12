@@ -4,7 +4,7 @@ import time
 from typing import Optional
 
 import requests
-from bs4 import BeautifulSoup
+from selectolax.parser import HTMLParser
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium_stealth import stealth
@@ -46,7 +46,7 @@ def get_driver(headless: bool = True) -> webdriver.Chrome:
     return driver
 
 
-def get_soup(
+def get_dom(
     url: str,
     delay: float = 2.0,
     headless: bool = True,
@@ -54,8 +54,8 @@ def get_soup(
     max_delay: float = 1.5,
     max_retries: int = 3,
     verbose: bool = True,
-) -> Optional[BeautifulSoup]:
-    """Selenium + stealth + retries to render JS and return parsed HTML."""
+) -> Optional[HTMLParser]:
+    """Selenium + stealth + retries to render JS and return parsed DOM."""
 
     def fetch():
         driver = get_driver(headless=headless)
@@ -63,7 +63,7 @@ def get_soup(
         time.sleep(delay)
         html = driver.page_source
         driver.quit()
-        return BeautifulSoup(html, "lxml")
+        return HTMLParser(html)
 
     return throttle_and_retry(fetch, max_retries, min_delay, max_delay, verbose)
 
