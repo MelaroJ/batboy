@@ -7,11 +7,13 @@ on:
     branches: ["**"]
 
 jobs:
-  test:
+  fast-offline-tests:
+    name: Fast Offline Tests (no web)
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
           - os: ubuntu-latest
             pytest_cmd: .venv/bin/python -m pytest
@@ -24,14 +26,47 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: "Set up Python"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run tests (offline only)
+        run: uv run pytest -m "no_web"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+
+  full-coverage:
+    name: Full Test Coverage (main only)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            pytest_cmd: .venv/bin/python -m pytest
+          - os: windows-latest
+            pytest_cmd: .venv\Scripts\python -m pytest
+
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version-file: "pyproject.toml"
 
-      - name: run tests (excluding web)
-        run: uv run pytest -m "not_web"
-
+      - name: Run all tests with coverage
+        run: uv run pytest --cov=batboy --cov-report=term-missing
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
