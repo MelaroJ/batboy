@@ -31,6 +31,7 @@ def test_get_driver_initializes_quietly():
     driver.quit()
 
 
+@pytest.mark.no_web
 def test_throttle_and_retry_retries_then_succeeds(caplog):
     state = {"attempts": 0}
 

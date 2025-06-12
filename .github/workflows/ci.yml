@@ -30,4 +30,10 @@ jobs:
           python-version-file: "pyproject.toml"
 
       - name: run tests (excluding web)
-        run: uv run pytest -m "not web"
+        run: uv run pytest -m "not_web"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage

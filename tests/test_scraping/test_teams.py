@@ -10,6 +10,7 @@ EXAMPLE_TEAM_NAME = "Tennessee"
 EXAMPLE_TEAM_ID = 694
 
 
+@pytest.mark.no_web
 def test_get_ncaa_baseball_teams_returns_valid_dataframe():
     df = get_ncaa_baseball_teams()
     assert isinstance(df, pl.DataFrame)
@@ -57,6 +58,7 @@ def test_get_team_seasons_returns_valid_dataframe(team):
     assert win_pct_max <= 1.0
 
 
+@pytest.mark.no_web
 def test_get_team_seasons_fails_on_invalid_team():
     with pytest.raises(ValueError, match="not found or ambiguous"):
         get_team_seasons("Definitely Not A School")
