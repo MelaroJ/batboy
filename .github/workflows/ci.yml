@@ -12,6 +12,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            pytest_cmd: .venv/bin/python -m pytest
+          - os: windows-latest
+            pytest_cmd: .venv\Scripts\python -m pytest
 
     steps:
       - uses: actions/checkout@v4
@@ -25,14 +30,7 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           uv venv
-          .\.venv\Scripts\activate 2>$null || source .venv/bin/activate
           uv pip install -e .[dev]
 
       - name: Run tests (excluding web)
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            .\.venv\Scripts\activate
-          else
-            source .venv/bin/activate
-          fi
-          pytest -m "not web"
+        run: ${{ matrix.pytest_cmd }} -m "not web"
