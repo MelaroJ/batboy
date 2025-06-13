@@ -1,6 +1,31 @@
 # src/batboy/config/constants.py
 
+# paths
 BASE_DOMAIN = "https://stats.ncaa.org"
+NCAA_SCHOOLS = "src/batboy/data/ncaa_schools.parquet"
+SEASON_INFO_OUT = "src/batboy/data/season_info_available.parquet"
+INFO_DB_PATH = "src/batboy/data/season_info_audit.duckdb"
+
+# Duckdb tables
+SEASON_INFO_TABLE_NAME = "season_info"
+
+
+# Global headers for static requests
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml",
+}
+
+TRACKED_TABS = {
+    "Schedule/Results",
+    "Roster",
+    "Team Statistics",
+    "Game By Game",
+    "Ranking Summary",
+}
 
 STAT_CATEGORY_SCHEMAS = {
     "hitting": [

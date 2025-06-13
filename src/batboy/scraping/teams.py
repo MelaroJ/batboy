@@ -1,20 +1,23 @@
 import re
 import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import polars as pl
-from rich.pretty import pprint
 from selectolax.parser import HTMLParser
 
-from batboy.config.constants import BASE_DOMAIN
+from batboy.config.constants import (
+    BASE_DOMAIN,
+    NCAA_SCHOOLS,
+    TRACKED_TABS,
+)
 from batboy.data import load_schools
-from batboy.scraping.core import get_dom, get_driver
-from batboy.utils import setup_logger
+from batboy.scraping.core import get_dom, get_driver, throttle_and_retry
+from batboy.utils import append_to_duckdb, get_completed_org_ids, setup_logger
 
 logger = setup_logger()
 
-DATA_PATH = Path(__file__).parent.parent / "data" / "ncaa_schools.parquet"
+DATA_PATH = Path(NCAA_SCHOOLS)
 
 
 def get_ncaa_baseball_teams(refresh: bool = False) -> pl.DataFrame:
@@ -180,13 +183,151 @@ def get_team_seasons(team: Union[int, str]) -> pl.DataFrame:
         first_year = records[-1]["year"]
         last_year = records[0]["year"]
         logger.info(f"Most recent season: {last_year}")
-        pprint(records[0])
         logger.info(
-            f"{team_label} history for {len(records)} seasons scraped ({first_year} to {
-                last_year
-            })."
+            f"{team_label} history for {len(records)} seasons available ({
+                first_year
+            } to {last_year})."
         )
     else:
         logger.warning(f"No seasons found for {team_label}.")
 
     return pl.DataFrame(records)
+
+
+def get_season_tabs(season_url: str, verbose: bool = True) -> Dict[str, bool]:
+    full_url = f"{BASE_DOMAIN}{season_url}"
+
+    def fetch_main():
+        return get_dom(full_url)
+
+    dom = throttle_and_retry(fetch_main, verbose=verbose)
+    if dom is None or dom.root is None:
+        return {tab: False for tab in TRACKED_TABS}
+
+    tab_elements = dom.css(".nav-tabs .nav-link")
+    tab_links: Dict[str, str] = {}
+    for tab in tab_elements:
+        label = tab.text(strip=True)
+        href = tab.attrs.get("href")
+        if not href or not label:
+            continue
+        if label not in TRACKED_TABS or href.startswith("#"):
+            continue
+        tab_links[label] = f"{BASE_DOMAIN}{href}"
+
+    tab_status: Dict[str, bool] = {}
+    for label in TRACKED_TABS:
+        url_optional = tab_links.get(label)
+        if not isinstance(url_optional, str):
+            tab_status[label] = False
+            continue
+
+        url: str = url_optional
+        tab_dom = throttle_and_retry(lambda: get_dom(url), verbose=verbose)
+
+        if tab_dom is None or tab_dom.root is None or tab_dom.body is None:
+            tab_status[label] = False
+            continue
+
+        body_text = tab_dom.body.text(strip=True)
+        body_html = tab_dom.body.html or ""
+
+        looks_like_image_only = "<img" in body_html and len(body_text) < 200
+        tab_status[label] = not looks_like_image_only
+
+        if verbose:
+            status = "✅" if tab_status[label] else "❌"
+            logger.info(f"{label:20s}: {status} ({url})")
+
+    return tab_status
+
+
+def audit_info_for_team(org_id: int, min_year: str = "1996-97") -> pl.DataFrame:
+    """Audit which info tabs are available for all seasons of a given team (i.e., Schedule/Results, Roster, etc)."""
+    school_name = load_schools().filter(pl.col("org_id") == org_id)[0, "school_name"]
+    season_df = get_team_seasons(org_id)
+    season_df = season_df.filter(pl.col("year") >= min_year)
+
+    records = []
+    for row in season_df.iter_rows(named=True):
+        year = row["year"]
+        season_url = row["season_url"]
+        logger.info(f"\n🔍 Auditing {school_name} {year} → {season_url}")
+        try:
+            tabs = get_season_tabs(season_url)
+            records.append(
+                {
+                    "year": year,
+                    "season_url": season_url,
+                    "org_id": org_id,
+                    "school_name": school_name,
+                    "has_schedule": tabs.get("Schedule/Results", False),
+                    "has_roster": tabs.get("Roster", False),
+                    "has_team_stats": tabs.get("Team Statistics", False),
+                    "has_game_by_game": tabs.get("Game By Game", False),
+                    "has_ranking_summary": tabs.get("Ranking Summary", False),
+                }
+            )
+        except Exception as e:
+            logger.info(f"❌ Failed on {school_name} {year}: {e}")
+
+    return pl.DataFrame(records)
+
+
+def audit_all_info_with_resume(
+    min_year: str = "1996-97", div: str = "D-I", limit: Optional[int] = None
+):
+    logger.info(
+        f"\n🚦 Starting audit_all_info_with_resume(min_year='{min_year}', div='{
+            div
+        }', limit={limit})"
+    )
+
+    schools = load_schools()
+    done_ids = get_completed_org_ids()
+    logger.info(f"✔️ Already completed org_ids: {sorted(done_ids)}")
+
+    filtered_rows = []
+
+    for row in schools.iter_rows(named=True):
+        org_id = row["org_id"]
+
+        if org_id in done_ids:
+            logger.info(f"⏭️ Skipping org_id={org_id} — already in DuckDB.")
+            continue
+
+        try:
+            df = get_team_seasons(org_id)
+            if df.shape[0] == 0:
+                logger.info(f"⏭️ Skipping org_id={org_id} — no seasons found.")
+                continue
+
+            latest_division = df[0, "division"]
+            if latest_division != div:
+                logger.info(
+                    f"⏭️ Skipping org_id={org_id} — not {div} (got '{latest_division}')."
+                )
+                continue
+
+            filtered_rows.append(row)
+
+            if limit and len(filtered_rows) >= limit:
+                break
+
+        except Exception as e:
+            logger.warning(f"⚠️ Error checking division for org_id={org_id}: {e}")
+
+    if not filtered_rows:
+        logger.info("📭 No teams to audit after applying division and resume filters.")
+        return
+
+    schools = pl.DataFrame(filtered_rows)
+
+    for row in schools.iter_rows(named=True):
+        org_id = row["org_id"]
+        try:
+            df = audit_info_for_team(org_id, min_year)
+            if df.shape[0] > 0:
+                append_to_duckdb(df)
+        except Exception as e:
+            logger.info(f"Failed on org_id={org_id}: {e}")

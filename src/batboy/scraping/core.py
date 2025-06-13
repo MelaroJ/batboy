@@ -9,14 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium_stealth import stealth
 
-# Global headers for static requests
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml",
-}
+from batboy.config.constants import HEADERS
 
 
 def make_request(url: str, timeout: float = 10.0) -> requests.Response:
@@ -71,8 +64,8 @@ def get_dom(
 def throttle_and_retry(
     func,
     max_retries: int = 3,
-    min_delay: float = 0.5,
-    max_delay: float = 1.5,
+    min_delay: float = 2.5,
+    max_delay: float = 5.5,
     verbose: bool = True,
 ):
     """Wrap a request function with delay and retry logic."""
