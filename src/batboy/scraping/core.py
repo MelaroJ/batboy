@@ -64,8 +64,8 @@ def get_dom(
 def throttle_and_retry(
     func,
     max_retries: int = 3,
-    min_delay: float = 2.5,
-    max_delay: float = 5.5,
+    min_delay: float = 1.0,
+    max_delay: float = 2.5,
     verbose: bool = True,
 ):
     """Wrap a request function with delay and retry logic."""

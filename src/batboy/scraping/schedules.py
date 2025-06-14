@@ -28,112 +28,207 @@ def _parse_schedule_dom(dom: HTMLParser, season_url: str) -> pl.DataFrame:
         ),
         None,
     )
-    if header is None or header.parent is None:
-        logger.warning(f"❌ Schedule header not found at {season_url}")
-        return pl.DataFrame()
 
-    table = header.parent.css_first("table")
+    if header and header.parent:
+        table = header.parent.css_first("table")
+    else:
+        table = dom.css_first("table.mytable")
+
+    if table is None:
+        logger.warning(f"❌ Schedule table not found at {season_url}")
+        return pl.DataFrame()
     if table is None:
         logger.warning(f"❌ Schedule table not found at {season_url}")
         return pl.DataFrame()
 
-    tbody = table.css_first("tbody")
-    if tbody is None:
-        logger.warning(f"❌ Schedule table has no <tbody> at {season_url}")
+    rows = table.css("tr")
+
+    # Try to find the first row with at least 3 <td> cells
+    data_row = next((r for r in rows if len(r.css("td")) >= 3), None)
+    if not data_row:
+        logger.warning(f"❌ No data rows with >=3 <td> cells at {season_url}")
         return pl.DataFrame()
 
-    rows = tbody.css("tr.underline_rows")
-    records = []
+    num_cols = len(data_row.css("td"))
 
-    for row in rows:
-        cells = row.css("td")
-        if len(cells) < 4:
-            continue
+    if num_cols == 3:
+        logger.info("🕰 Detected pre-2018 schedule legacy format (no attendance column)")
+        records = []
+        for row in rows:
+            cells = row.css("td")
+            if len(cells) != 3:
+                continue  # only process rows with exactly 3 columns
 
-        date = cells[0].text(strip=True)
+            date = cells[0].text(strip=True)
 
-        # Opponent breakdown
-        opp = cells[1]
-        opponent_raw = opp.text(strip=True)
-        opponent_id = None
-        opponent_rank = None
-        opponent_name = opponent_raw
-        opponent_site = ""
-        opponent_note = ""
+            # Opponent info
+            opp = cells[1]
+            opponent_raw = opp.text(strip=True)
+            opponent_name = opponent_raw
+            opponent_id = None
+            opponent_site = ""
+            opponent_note = ""
 
-        a_tag = opp.css_first("a")
-        if a_tag:
-            href = a_tag.attrs.get("href") or ""
-            m = re.search(r"/teams/(\d+)", href)
+            a_tag = opp.css_first("a")
+            if a_tag:
+                href = a_tag.attrs.get("href") or ""
+                m = re.search(r"/teams/(\d+)", href)
+                if m:
+                    opponent_id = int(m.group(1))
+
+                anchor_text = a_tag.text(strip=True)
+                opponent_name = anchor_text.strip()
+
+                # Check for @ or vs in full opponent text
+                prefix_match = re.match(r"(@|vs)?\s*(.*)", opponent_raw)
+                if prefix_match:
+                    if prefix_match.group(1):
+                        opponent_site = prefix_match.group(1)
+                    remainder = prefix_match.group(2)
+                    if opponent_name in remainder:
+                        opponent_note = remainder.replace(opponent_name, "").strip()
+
+            # Result and game_id
+            result_cell = cells[2]
+            result = result_cell.text(strip=True)
+            team_score = opp_score = innings = game_id = None
+
+            m = re.search(r"[WL] (\d+)\s*-\s*(\d+)(?: \((\d+)\))?", result)
             if m:
-                opponent_id = int(m.group(1))
+                team_score = int(m.group(1))
+                opp_score = int(m.group(2))
+                if m.group(3):
+                    innings = int(m.group(3))
 
-            anchor_text = a_tag.text(strip=True)
+            link = result_cell.css_first("a")
+            if link:
+                href = link.attrs.get("href") or ""
+                m = re.search(r"/contests/(\d+)/box_score", href)
+                if m:
+                    game_id = int(m.group(1))
 
-            # Try to extract opponent rank from anchor_text
-            rank_match = re.match(r"#(\d+)\s+(.*)", anchor_text)
-            if rank_match:
-                opponent_rank = int(rank_match.group(1))
-                opponent_name = rank_match.group(2)
-            else:
-                opponent_name = anchor_text
+            records.append(
+                {
+                    "date": date,
+                    "opponent_raw": opponent_raw,
+                    "opponent_name": opponent_name,
+                    "opponent_id": opponent_id,
+                    "opponent_rank": None,
+                    "opponent_site": opponent_site,
+                    "opponent_note": opponent_note,
+                    "result": result,
+                    "team_score": team_score,
+                    "opp_score": opp_score,
+                    "innings": innings,
+                    "attendance": None,  # no attendance available pre-2018
+                    "game_id": game_id,
+                }
+            )
 
-            # Check for @ or vs prefix in raw text (not anchor)
-            prefix_match = re.match(r"(@|vs)?\s*#?(\d+)?\s*", opponent_raw)
-            if prefix_match:
-                if prefix_match.group(1):
-                    opponent_site = prefix_match.group(1)
+        return pl.DataFrame(records)
 
-            # Remove known pieces to extract note
-            cleaned = opponent_raw
-            cleaned = re.sub(rf"^{re.escape(opponent_site)}", "", cleaned).strip()
-            cleaned = re.sub(r"#\d+", "", cleaned).strip()
-            cleaned = cleaned.replace(opponent_name, "", 1).strip()
-            if cleaned:
-                opponent_note = cleaned
+    elif num_cols >= 4:
+        logger.info("📅 Detected modern schedule format (attendance column present)")
+        tbody = table.css_first("tbody")
+        if tbody is None:
+            logger.warning(f"❌ Schedule table has no <tbody> at {season_url}")
+            return pl.DataFrame()
 
-        # Result and game_id
-        result = cells[2].text(strip=True)
-        team_score, opp_score, innings = None, None, None
-        m = re.search(r"[WL] (\d+)-(\d+)(?: \((\d+)\))?", result)
-        if m:
-            team_score = int(m.group(1))
-            opp_score = int(m.group(2))
-            if m.group(3):
-                innings = int(m.group(3))
+        rows = tbody.css("tr.underline_rows")
+        records = []
 
-        game_id = None
-        result_link = cells[2].css_first("a")
-        if result_link:
-            href = result_link.attrs.get("href") or ""
-            m = re.search(r"/contests/(\d+)/box_score", href)
+        for row in rows:
+            cells = row.css("td")
+            if len(cells) < 4:
+                continue
+
+            date = cells[0].text(strip=True)
+
+            # Opponent breakdown
+            opp = cells[1]
+            opponent_raw = opp.text(strip=True)
+            opponent_id = None
+            opponent_rank = None
+            opponent_name = opponent_raw
+            opponent_site = ""
+            opponent_note = ""
+
+            a_tag = opp.css_first("a")
+            if a_tag:
+                href = a_tag.attrs.get("href") or ""
+                m = re.search(r"/teams/(\d+)", href)
+                if m:
+                    opponent_id = int(m.group(1))
+
+                anchor_text = a_tag.text(strip=True)
+
+                # Try to extract opponent rank from anchor_text
+                rank_match = re.match(r"#(\d+)\s+(.*)", anchor_text)
+                if rank_match:
+                    opponent_rank = int(rank_match.group(1))
+                    opponent_name = rank_match.group(2)
+                else:
+                    opponent_name = anchor_text
+
+                # Check for @ or vs prefix in raw text (not anchor)
+                prefix_match = re.match(r"(@|vs)?\s*#?(\d+)?\s*", opponent_raw)
+                if prefix_match:
+                    if prefix_match.group(1):
+                        opponent_site = prefix_match.group(1)
+
+                # Remove known pieces to extract note
+                cleaned = opponent_raw
+                cleaned = re.sub(rf"^{re.escape(opponent_site)}", "", cleaned).strip()
+                cleaned = re.sub(r"#\d+", "", cleaned).strip()
+                cleaned = cleaned.replace(opponent_name, "", 1).strip()
+                if cleaned:
+                    opponent_note = cleaned
+
+            # Result and game_id
+            result = cells[2].text(strip=True)
+            team_score, opp_score, innings = None, None, None
+            m = re.search(r"[WL] (\d+)-(\d+)(?: \((\d+)\))?", result)
             if m:
-                game_id = int(m.group(1))
+                team_score = int(m.group(1))
+                opp_score = int(m.group(2))
+                if m.group(3):
+                    innings = int(m.group(3))
 
-        att_raw = cells[3].text(strip=True).replace(",", "")
-        try:
-            attendance = int(att_raw)
-        except ValueError:
-            attendance = None
+            game_id = None
+            result_link = cells[2].css_first("a")
+            if result_link:
+                href = result_link.attrs.get("href") or ""
+                m = re.search(r"/contests/(\d+)/box_score", href)
+                if m:
+                    game_id = int(m.group(1))
 
-        record = {
-            "date": date,
-            "opponent_raw": opponent_raw,
-            "opponent_name": opponent_name,
-            "opponent_id": opponent_id,
-            "opponent_rank": opponent_rank,
-            "opponent_site": opponent_site,
-            "opponent_note": opponent_note,
-            "result": result,
-            "team_score": team_score,
-            "opp_score": opp_score,
-            "innings": innings,
-            "attendance": attendance,
-            "game_id": game_id,
-        }
-        records.append(record)
+            att_raw = cells[3].text(strip=True).replace(",", "")
+            try:
+                attendance = int(att_raw)
+            except ValueError:
+                attendance = None
 
-    return pl.DataFrame(records)
+            record = {
+                "date": date,
+                "opponent_raw": opponent_raw,
+                "opponent_name": opponent_name,
+                "opponent_id": opponent_id,
+                "opponent_rank": opponent_rank,
+                "opponent_site": opponent_site,
+                "opponent_note": opponent_note,
+                "result": result,
+                "team_score": team_score,
+                "opp_score": opp_score,
+                "innings": innings,
+                "attendance": attendance,
+                "game_id": game_id,
+            }
+            records.append(record)
+
+        return pl.DataFrame(records)
+    else:
+        logger.warning(f"⚠️ Unrecognized schedule format: {num_cols} columns")
+        return pl.DataFrame()
 
 
 def get_team_schedule(season_url: str) -> pl.DataFrame:
