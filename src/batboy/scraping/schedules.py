@@ -1,10 +1,17 @@
 import re
 from typing import Optional
 
+import duckdb
 import polars as pl
 from selectolax.parser import HTMLParser
 
-from batboy.config.constants import BASE_DOMAIN
+from batboy.config.constants import (
+    BASE_DOMAIN,
+    INFO_DB_PATH,
+    SCHEDULE_DATA_TABLE,
+    SCHEDULE_LOG_TABLE,
+    SEASON_SCHEDULE_DB,
+)
 from batboy.scraping.core import get_dom
 from batboy.utils import setup_logger
 
@@ -139,7 +146,7 @@ def get_team_schedule(season_url: str) -> pl.DataFrame:
     Returns:
         Polars DataFrame with schedule and result metadata.
     """
-    dom: Optional[HTMLParser] = get_dom(season_url)
+    dom: Optional[HTMLParser] = get_dom(f"{BASE_DOMAIN}{season_url}")
     if dom is None or dom.root is None:
         logger.error(f"❌ Failed to load DOM from {season_url}")
         return pl.DataFrame()
@@ -151,7 +158,173 @@ def get_team_schedule(season_url: str) -> pl.DataFrame:
     return df
 
 
+def get_pending_schedule_targets(limit: Optional[int] = None) -> pl.DataFrame:
+    """
+    Get team-season rows with has_schedule == True and not yet scraped.
+
+    Returns:
+        Polars DataFrame with columns:
+        ["org_id", "school_name", "season_url", "year"]
+    """
+    # Connect to target DB and create log table if missing
+    con = duckdb.connect(SEASON_SCHEDULE_DB)
+    con.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEDULE_LOG_TABLE} (
+            org_id INTEGER,
+            school_name TEXT,
+            season_url TEXT,
+            success BOOLEAN,
+            n_games INTEGER,
+            error TEXT
+        );
+    """)
+    scraped_urls = con.sql(
+        f"SELECT DISTINCT season_url FROM {SCHEDULE_LOG_TABLE}"
+    ).fetchall()
+    already_done = {row[0] for row in scraped_urls}
+    con.close()
+
+    # Load from audit DB
+    con_audit = duckdb.connect(INFO_DB_PATH)
+    df = con_audit.sql("""
+        SELECT org_id, school_name, season_url, year
+        FROM season_info
+        WHERE has_schedule = TRUE
+    """).pl()
+    con_audit.close()
+
+    # Exclude completed URLs
+    pending = df.filter(~pl.col("season_url").is_in(already_done))
+
+    if limit:
+        pending = pending.head(limit)
+
+    return pending
+
+
+def log_scrape_result(
+    org_id: int,
+    school_name: str,
+    season_url: str,
+    success: bool,
+    n_games: int,
+    error: Optional[str] = None,
+) -> None:
+    """
+    Append one row to the log table to record scrape attempt.
+
+    Args:
+        org_id: Team org_id
+        school_name: Full school name
+        season_url: Unique identifier for team-season
+        success: Whether schedule scrape succeeded
+        n_games: Number of games parsed (0 if failed)
+        error: Optional error message on failure
+    """
+    con = duckdb.connect(SEASON_SCHEDULE_DB)
+
+    con.execute(
+        f"""
+        INSERT INTO {SCHEDULE_LOG_TABLE} (
+            org_id, school_name, season_url, success, n_games, error
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+        (org_id, school_name, season_url, success, n_games, error),
+    )
+
+    con.close()
+
+
+def append_schedule_data(
+    df: pl.DataFrame,
+    org_id: int,
+    school_name: str,
+    season_url: str,
+    year: str,
+) -> None:
+    """
+    Append schedule data to DuckDB with season context.
+
+    Args:
+        df: Game-level schedule records from get_team_schedule()
+        org_id: School org_id
+        school_name: Full school name
+        season_url: Source URL (used for joining and tracing)
+        year: Season year label
+    """
+    if df.is_empty():
+        return
+
+    df = df.with_columns(
+        org_id=pl.lit(org_id, dtype=pl.Int32),
+        school_name=pl.lit(school_name, dtype=pl.String),
+        season_url=pl.lit(season_url, dtype=pl.String),
+        year=pl.lit(year, dtype=pl.String),
+    )
+
+    con = duckdb.connect(SEASON_SCHEDULE_DB)
+
+    con.sql(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEDULE_DATA_TABLE} AS
+        SELECT * FROM df LIMIT 0
+    """)
+    con.register("df", df)
+    con.sql(f"INSERT INTO {SCHEDULE_DATA_TABLE} SELECT * FROM df")
+    con.unregister("df")
+    con.close()
+
+
+def batch_scrape_team_schedules(limit: Optional[int] = None) -> None:
+    """
+    Batch scrape team schedules from season URLs with resume logic.
+
+    Only scrapes if:
+    - has_schedule = True
+    - season_url not in log table
+
+    Args:
+        limit: Optional limit to number of team-seasons to process
+    """
+    logger.info(f"\n🚦 Starting batch scrape of team schedules (limit={limit})")
+    pending = get_pending_schedule_targets(limit)
+
+    if pending.is_empty():
+        logger.info("📭 Nothing to scrape — all season schedules are logged.")
+        return
+
+    for row in pending.iter_rows(named=True):
+        org_id = row["org_id"]
+        school_name = row["school_name"]
+        season_url = row["season_url"]
+        year = row["year"]
+
+        logger.info(f"\n🔍 {school_name} {year} — {season_url}")
+
+        try:
+            df = get_team_schedule(season_url)
+            n_games = df.shape[0]
+            append_schedule_data(df, org_id, school_name, season_url, year)
+            log_scrape_result(
+                org_id=org_id,
+                school_name=school_name,
+                season_url=season_url,
+                success=True,
+                n_games=n_games,
+            )
+            logger.info(f"✅ Scraped {n_games} games.")
+
+        except Exception as e:
+            logger.error(f"❌ Failed: {e}")
+            log_scrape_result(
+                org_id=org_id,
+                school_name=school_name,
+                season_url=season_url,
+                success=False,
+                n_games=0,
+                error=str(e),
+            )
+
+
 if __name__ == "__main__":
-    test_url = f"{BASE_DOMAIN}/teams/596721"
-    df = get_team_schedule(test_url)
-    print(df)
+    batch_scrape_team_schedules(limit=1000)

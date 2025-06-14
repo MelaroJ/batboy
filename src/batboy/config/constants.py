@@ -5,10 +5,12 @@ BASE_DOMAIN = "https://stats.ncaa.org"
 NCAA_SCHOOLS = "src/batboy/data/ncaa_schools.parquet"
 SEASON_INFO_OUT = "src/batboy/data/season_info_available.parquet"
 INFO_DB_PATH = "src/batboy/data/season_info_audit.duckdb"
+SEASON_SCHEDULE_DB = "src/batboy/data/season_schedules.duckdb"
 
 # Duckdb tables
 SEASON_INFO_TABLE_NAME = "season_info"
-
+SCHEDULE_LOG_TABLE = "log"
+SCHEDULE_DATA_TABLE = "schedules"
 
 # Global headers for static requests
 HEADERS = {

@@ -331,3 +331,8 @@ def audit_all_info_with_resume(
                 append_to_duckdb(df)
         except Exception as e:
             logger.info(f"Failed on org_id={org_id}: {e}")
+
+
+if __name__ == "__main__":
+    # Run with a small limit for debugging
+    audit_all_info_with_resume(min_year="1999-2001", limit=15)
